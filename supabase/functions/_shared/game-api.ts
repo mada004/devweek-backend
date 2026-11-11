@@ -56,7 +56,18 @@ export async function gameApi(request: Request, path: string, store: GameStore, 
     if (previous.status !== 'started') return error('attempt_already_completed', 'Attempt already completed', 409);
     const saved = await store.finish(body.attempt_id, body.score as number, now().toISOString());
     if (!saved) return error('attempt_already_completed', 'Attempt already completed', 409);
-    return json({ attempt: saved, ...await store.total(saved.student_id) });
+    // Persistence has succeeded. A separate aggregate read must not turn it
+    // into an apparent save failure or cause clients to submit the score again.
+    try {
+      const total = await store.total(saved.student_id);
+      return json({ attempt: saved, ...total, score_saved: true, total_available: true });
+    } catch {
+      return json({
+        attempt: saved, score_saved: true, total_available: false,
+        total_score: null, games_completed: null,
+        warning: { code: 'total_unavailable', message: 'Score saved; updated total could not be retrieved' },
+      });
+    }
   } catch (cause) {
     if (cause instanceof GameError && cause.code !== 'storage_error') return error(cause.code, 'Attempt conflicts with database eligibility or lifecycle rules', 409);
     return error('internal_error', 'Unable to process request', 500);

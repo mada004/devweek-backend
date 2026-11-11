@@ -34,9 +34,9 @@ export function studentStore(url: string, serviceKey: string, transport: typeof 
       return rows[0];
     },
     async find(number) {
-      // Quote and escape the PostgREST literal before URL encoding (no filter injection).
-      const literal = `"${number.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-      const query = new URLSearchParams({ select: 'id,full_name,student_number', student_number: `eq.${literal}`, limit: '1' });
+      // An eq operand is the exact TEXT value, not a quoted SQL/list literal.
+      // URLSearchParams keeps reserved characters inside this one filter value.
+      const query = new URLSearchParams({ select: 'id,full_name,student_number', student_number: `eq.${number}`, limit: '1' });
       const rows = await result(await transport(`${endpoint}?${query}`, { headers }));
       return rows[0] ?? null;
     },

@@ -168,9 +168,47 @@ test('PostgREST adapter projects fields, preserves strings, escapes filters, and
   assert.equal(calls[0].init?.method, 'POST');
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { full_name: 'Name', student_number: '001' });
   assert.equal(calls[0].url.searchParams.get('select'), 'id,full_name,student_number');
-  await store.find('00"\\,or=(id.not.is.null)');
-  assert.equal(calls[1].url.searchParams.get('student_number'), 'eq."00\\"\\\\,or=(id.not.is.null)"');
+  const filterValue = '00"\\,or=(id.not.is.null)';
+  await store.find(filterValue);
+  assert.equal(calls[1].url.searchParams.get('student_number'), 'eq.' + filterValue);
   assert.equal(calls[1].url.searchParams.get('limit'), '1');
   const duplicate = studentStore('https://isolated.test', 'test-only-key', (async () => new Response('{"code":"23505","message":"private"}', { status: 409 })) as typeof fetch);
   await assert.rejects(() => duplicate.create('Name', '001'), (e: unknown) => e instanceof StoreError && e.code === '23505');
+});
+
+test('adapter-backed fresh registration and number-only login preserve exact TEXT filters', async () => {
+  const records = new Map<string, Student>();
+  const transport = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    assert.equal(url.pathname, '/rest/v1/students');
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body));
+      if (records.has(body.student_number)) return new Response('{"code":"23505"}', { status: 409 });
+      const row = { id: crypto.randomUUID(), full_name: body.full_name, student_number: body.student_number };
+      records.set(row.student_number, row);
+      return new Response(JSON.stringify([row]), { status: 201 });
+    }
+    assert.deepEqual([...url.searchParams.keys()].sort(), ['limit', 'select', 'student_number']);
+    const filter = url.searchParams.get('student_number')!;
+    assert.ok(filter.startsWith('eq.'));
+    // Equality operands are the TEXT itself, not a quoted SQL/list literal.
+    const row = records.get(filter.slice(3));
+    return new Response(JSON.stringify(row ? [row] : []));
+  }) as typeof fetch;
+  const handler = createHandler('students', { accessCode, signingSecret, store: studentStore('https://isolated.test', 'test-only-key', transport) });
+  const { access_token } = await platformTokens(signingSecret).issue();
+  const call = (path: string, body: unknown) => handler(new Request(`https://isolated.test${path}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+  for (const student_number of ['00123', `TEST-ONLY-${crypto.randomUUID()}`, '00"\\,or=(id.not.is.null)&limit=999', ' 00123 ']) {
+    const registered = await call('/students/register', { full_name: 'Synthetic Regression', student_number });
+    assert.equal(registered.status, 201);
+    const expected = await registered.json();
+    const login = await call('/students/login', { student_number });
+    assert.equal(login.status, 200);
+    assert.deepEqual(await login.json(), expected);
+    assert.equal(expected.student.student_number, student_number);
+    assert.equal((await call('/students/register', { full_name: 'Duplicate', student_number })).status, 409);
+  }
+  assert.equal((await call('/students/login', { student_number: '123' })).status, 404);
 });

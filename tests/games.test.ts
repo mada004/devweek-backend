@@ -108,6 +108,8 @@ test('valid completion returns saved score and completed-only total; replay is r
   const saved = await response.json();
   assert.equal(saved.attempt.score, 100);
   assert.equal(saved.attempt.status, 'completed');
+  assert.equal(saved.score_saved, true);
+  assert.equal(saved.total_available, true);
   assert.equal(saved.total_score, 100);
   assert.equal(saved.games_completed, 1);
   assert.equal((await f.call('/attempts/finish', { attempt_id: started.attempt.id, score: 1 })).status, 409);
@@ -218,4 +220,52 @@ test('PostgREST adapter uses database defaults, atomic completion predicate, vie
     const conflict = gameStore('https://isolated.test', 'test-only-key', (async () => new Response(JSON.stringify({ code: '23505', message: `duplicate constraint ${constraint}` }), { status: 409 })) as typeof fetch);
     await assert.rejects(() => conflict.start(studentId, 1), (e: unknown) => e instanceof GameError && e.code === code);
   }
+});
+
+test('finish confirms saved score when the separate total lookup fails', async () => {
+  const f = fixture();
+  const { attempt } = await (await f.call('/attempts/start', { student_id: studentId, game_id: 1 })).json();
+  const originalTotal = f.store.total;
+  f.store.total = async () => { throw new GameError('storage_error'); };
+  const response = await f.call('/attempts/finish', { attempt_id: attempt.id, score: 85 });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.score_saved, true);
+  assert.equal(body.total_available, false);
+  assert.equal(body.total_score, null);
+  assert.equal(body.games_completed, null);
+  assert.deepEqual(body.warning, { code: 'total_unavailable', message: 'Score saved; updated total could not be retrieved' });
+  assert.equal(body.attempt.id, attempt.id);
+  assert.equal(body.attempt.status, 'completed');
+  assert.equal(body.attempt.score, 85);
+  assert.equal(f.attempts[0].score, 85);
+  assert.equal(f.writes(), 2);
+  assert.ok(!('error' in body));
+
+  const repeated = await f.call('/attempts/finish', { attempt_id: attempt.id, score: 25 });
+  assert.equal(repeated.status, 409);
+  assert.equal((await repeated.json()).error.code, 'attempt_already_completed');
+  assert.equal(f.writes(), 2);
+  assert.equal(f.attempts[0].score, 85);
+  f.store.total = originalTotal;
+  const progress = await (await f.call(`/students/${studentId}/progress`)).json();
+  assert.equal(progress.total_score, 85);
+  assert.equal(progress.games_completed, 1);
+  assert.equal(progress.games[0].attempt.score, 85);
+});
+
+test('actual finish save failure returns an error without success confirmation', async () => {
+  const f = fixture();
+  const { attempt } = await (await f.call('/attempts/start', { student_id: studentId, game_id: 1 })).json();
+  f.store.finish = async () => { throw new GameError('storage_error'); };
+  f.store.total = async () => { assert.fail('Total must not be read after a save failure'); };
+  const response = await f.call('/attempts/finish', { attempt_id: attempt.id, score: 85 });
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.deepEqual(body, { error: { code: 'internal_error', message: 'Unable to process request' } });
+  assert.ok(!('score_saved' in body));
+  assert.ok(!('attempt' in body));
+  assert.equal(f.attempts[0].status, 'started');
+  assert.equal(f.attempts[0].score, null);
+  assert.equal(f.writes(), 1);
 });
