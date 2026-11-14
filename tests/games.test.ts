@@ -27,7 +27,6 @@ function fixture() {
       // Simulates the DB's atomic unique checks independently of API prechecks.
       const play_date = riyadhDate(clock);
       if (attempts.some(a => a.student_id === student_id && a.game_id === game_id)) throw new GameError('game_already_attempted');
-      if (attempts.some(a => a.student_id === student_id && a.play_date === play_date)) throw new GameError('daily_limit_reached');
       const row: Attempt = { id: crypto.randomUUID(), student_id, game_id, play_date, started_at: clock.toISOString(), completed_at: null, status: 'started', score: null };
       attempts.push(row); writes++; return structuredClone(row);
     },
@@ -59,7 +58,7 @@ function fixture() {
   return { call, store, games, attempts, students, writes: () => writes, reads: () => reads, setTime: (date: string) => { clock = new Date(date); } };
 }
 
-test('valid start returns DB attempt ID/time and consumes game/daily slots', async () => {
+test('valid start returns DB attempt ID/time and consumes the game slot', async () => {
   const f = fixture();
   const response = await f.call('/attempts/start', { student_id: studentId, game_id: 1, play_date: '2099-01-01', started_at: '2099-01-01' });
   assert.equal(response.status, 201);
@@ -83,20 +82,28 @@ test('per-game restriction survives midnight and interrupted attempts', async ()
   assert.equal(f.attempts.length, 2);
 });
 
-test('second game on the same Riyadh date is rejected', async () => {
+test('all five different games can start and complete on the same Riyadh date', async () => {
   const f = fixture();
-  await f.call('/attempts/start', { student_id: studentId, game_id: 1 });
-  const response = await f.call('/attempts/start', { student_id: studentId, game_id: 2 });
-  assert.equal(response.status, 409);
-  assert.equal((await response.json()).error.code, 'daily_limit_reached');
+  for (let game_id = 1; game_id <= 5; game_id++) {
+    const response = await f.call('/attempts/start', { student_id: studentId, game_id });
+    assert.equal(response.status, 201);
+    const { attempt } = await response.json();
+    assert.equal(attempt.play_date, '2026-11-10');
+    assert.equal((await f.call('/attempts/finish', { attempt_id: attempt.id, score: 100 })).status, 200);
+  }
+  assert.deepEqual(await f.store.total(studentId), { total_score: 500, games_completed: 5 });
+  const progress = await (await f.call(`/students/${studentId}/progress`)).json();
+  assert.equal(progress.daily_slot_consumed, false);
+  assert.ok(progress.games.every((g: { eligible_to_start: boolean }) => !g.eligible_to_start));
 });
 
 test('competing starts surface storage conflicts without duplicate attempts', async () => {
   for (const gameIds of [[1, 2], [1, 1]]) {
     const f = fixture();
     const results = await Promise.all(gameIds.map(game_id => f.call('/attempts/start', { student_id: studentId, game_id })));
-    assert.deepEqual(results.map(r => r.status).sort(), [201, 409]);
-    assert.equal(f.attempts.length, 1);
+    const duplicate = gameIds[0] === gameIds[1];
+    assert.deepEqual(results.map(r => r.status).sort(), duplicate ? [201, 409] : [201, 201]);
+    assert.equal(f.attempts.length, duplicate ? 1 : 2);
   }
 });
 
@@ -159,8 +166,9 @@ test('progress reports five games, slot consumption, partial totals, and next-da
   assert.equal(today.games.length, 5);
   assert.equal(today.total_score, 60);
   assert.equal(today.games_completed, 1);
-  assert.equal(today.daily_slot_consumed, true);
-  assert.ok(today.games.every((g: { eligible_to_start: boolean }) => !g.eligible_to_start));
+  assert.equal(today.daily_slot_consumed, false);
+  assert.equal(today.games[0].eligible_to_start, false);
+  assert.ok(today.games.slice(1).every((g: { eligible_to_start: boolean }) => g.eligible_to_start));
   f.setTime('2026-11-10T21:00:00Z');
   const tomorrow = await (await f.call(`/students/${studentId}/progress`)).json();
   assert.equal(tomorrow.play_date, '2026-11-11');
@@ -216,7 +224,7 @@ test('PostgREST adapter uses database defaults, atomic completion predicate, vie
   assert.equal(calls[2].url.pathname, '/rest/v1/leaderboard_view');
   assert.equal(calls[2].url.searchParams.get('order'), 'total_score.desc,student_id.asc');
   assert.equal(calls[2].url.searchParams.get('limit'), '3');
-  for (const [constraint, code] of [['one_attempt_per_game', 'game_already_attempted'], ['one_attempt_per_day', 'daily_limit_reached']]) {
+  for (const [constraint, code] of [['one_attempt_per_game', 'game_already_attempted']]) {
     const conflict = gameStore('https://isolated.test', 'test-only-key', (async () => new Response(JSON.stringify({ code: '23505', message: `duplicate constraint ${constraint}` }), { status: 409 })) as typeof fetch);
     await assert.rejects(() => conflict.start(studentId, 1), (e: unknown) => e instanceof GameError && e.code === code);
   }

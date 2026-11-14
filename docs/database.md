@@ -8,7 +8,7 @@
 
 ## Constraints and concurrency
 
-`UNIQUE(student_id, game_id)` consumes the game slot at start, even if interrupted. `UNIQUE(student_id, play_date)` consumes the daily slot. PostgreSQL unique indexes enforce these restrictions under simultaneous requests; competing transactions cannot both commit conflicting records. Future backend code should handle unique-violation SQLSTATE `23505`, rather than relying on check-before-insert.
+`UNIQUE(student_id, game_id)` consumes the game slot at start, even if interrupted. The new `20261114000100_remove_daily_attempt_limit.sql` migration drops only `one_attempt_per_day`. All five different games can start on the same date. PostgreSQL unique indexes enforce these restrictions under simultaneous requests; competing transactions cannot both commit conflicting records. Future backend code should handle unique-violation SQLSTATE `23505`, rather than relying on check-before-insert.
 
 Score is nullable until completion and otherwise must be 0 through 100. Started rows require NULL score and completion timestamp; completed rows require both. Only started/completed statuses are accepted. At most five distinct games at 100 points each bound total scores to 500, without requiring completion of all games.
 
@@ -18,7 +18,7 @@ Unique constraints create registration and student-lookup indexes; a separate ga
 
 TIMESTAMPTZ stores instants; `play_date` stores the Asia/Riyadh calendar date. Defaults derive both start time and date from the same database statement time, independent of connection timezone. A CHECK requires `play_date = (started_at AT TIME ZONE 'Asia/Riyadh')::date`.
 
-Future backend code must derive dates from trusted server time, never client-provided dates or start timestamps. Prefer omitting both columns on INSERT to use consistent database defaults. The day resets at Riyadh midnight, not 24 hours after the previous attempt. Completion on a later day retains the start date.
+Future backend code must derive dates from trusted server time, never client-provided dates or start timestamps. Prefer omitting both columns on INSERT to use consistent database defaults. Riyadh dates remain historical metadata; they no longer restrict eligibility. Completion on a later day retains the start date.
 
 ## Leaderboard
 
@@ -49,9 +49,11 @@ Future Edge Functions should start with an INSERT of student_id/game_id and comp
 
 Apply `supabase/migrations/001_initial_schema.sql` once to an authorized development Supabase database. It is transactional, not an idempotent reset script. Do not use a production database for verification.
 
-In a disposable database verify duplicate-game inserts on later dates fail; different games on the same Riyadh day fail (including concurrent connections); scores -1 and 101 fail; inconsistent completion states fail; completed scores sum while started attempts do not; anonymous table/view operations fail. Roll back test data or discard the test database.
+Then apply `20261114000100_remove_daily_attempt_limit.sql` in development. It drops only the student/date unique constraint and its backing index. No rows, timestamps, score logic, grants, foreign keys, per-game uniqueness, or lifecycle functions change. The historical initial migration remains unchanged. Production still enforces its previous daily limit until this migration is separately approved and deployed.
 
-### Local verification performed (2026-11-10)
+In a disposable database verify duplicate-game inserts on later dates fail; different games on the same Riyadh day succeed (including concurrent connections); scores -1 and 101 fail; inconsistent completion states fail; completed scores sum while started attempts do not; anonymous table/view operations fail. Roll back test data or discard the test database.
+
+### Historical Phase 2 verification (2026-11-10, before daily-limit removal)
 
 The migration was executed successfully on a separate disposable PostgreSQL 17.11 cluster, not the existing local server. Supabase role names were simulated with NOLOGIN roles (service_role with BYPASSRLS), schema usage, and broad default table grants to all three roles before migration. Tests passed for student insertion and unique TEXT numbers of different lengths, all five 100-point seeds, denial of application game writes/truncation, daily and per-game uniqueness, scores -1/101 rejected and 0/100 accepted, required completion fields, completion/retry/reopen rejection, identity and start-detail immutability, attempt deletion/truncation denial, completed-only leaderboard sums up to 500, top-three retrieval, RLS enabled, and denied client access to student numbers and the view. Separate competing connections also verified daily uniqueness, per-game uniqueness across dates, and single completion with no double award.
 

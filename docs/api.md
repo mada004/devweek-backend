@@ -123,7 +123,7 @@ Example 200 response after one completed attempt:
 {
   "student_id":"00000000-0000-0000-0000-000000000001",
   "play_date":"2026-11-11",
-  "daily_slot_consumed":true,
+  "daily_slot_consumed":false,
   "total_score":85,
   "games_completed":1,
   "games":[
@@ -136,7 +136,7 @@ Example 200 response after one completed attempt:
 }
 ```
 
-`play_date` is the current Asia/Riyadh calendar date. Each game's `attempt` is null or the full attempt object shown above, including started attempts with null score/completion time. Eligibility requires an active game, no previous attempt for that game and no attempt started today. It is advisory and may change before Start commits. Only completed scores contribute to totals; the maximum across five games is 500. Progress uses separate reads, not a guaranteed single snapshot.
+`play_date` is the current Asia/Riyadh calendar date. Each game's `attempt` is null or the full attempt object shown above, including started attempts with null score/completion time. Eligibility requires an active game and no previous attempt for that game. All five different games may be completed on the same day. `daily_slot_consumed` is retained for compatibility, always false; use per-game `eligible_to_start`. It is advisory and may change before Start commits. Only completed scores contribute to totals; the maximum across five games is 500. Progress uses separate reads, not a guaranteed single snapshot.
 
 Errors: **400 `invalid_input`** for an invalid UUID; **404 `student_not_found`**; **401 `invalid_platform_token`**; **500 `internal_error` / `server_configuration_error`**, plus common routing/method errors.
 
@@ -154,9 +154,9 @@ Request, sent only after the operator explicitly presses Start:
 {"attempt":{"id":"10000000-0000-0000-0000-000000000001","student_id":"00000000-0000-0000-0000-000000000001","game_id":1,"status":"started","score":null,"play_date":"2026-11-11","started_at":"2026-11-11T12:00:00+00:00","completed_at":null}}
 ```
 
-The database generates the attempt ID, start timestamp, Riyadh date and initial state. **Start consumes both that game's one-time slot and the participant's daily slot**, including interrupted play. Selecting/confirming a game must NOT call Start. No cancellation/release/reset endpoint exists. Do not retry Start automatically or create another attempt after an ambiguous response; reconcile via progress first. Prevent duplicate Start actions while a request is pending.
+The database generates the attempt ID, start timestamp, Riyadh date and initial state. **Start consumes only that game's one-time event slot**, including interrupted play. Selecting/confirming a game must NOT call Start. No cancellation/release/reset endpoint exists. Do not retry Start automatically or create another attempt after an ambiguous response; reconcile via progress first. Prevent duplicate Start actions while a request is pending.
 
-Errors: **400 `invalid_input`**; **401 `invalid_platform_token`**; **404 `student_not_found` / `game_not_found`**; **409 `game_inactive`, `game_already_attempted`, `daily_limit_reached`, `attempt_conflict` or `reference_conflict`**; **415 `unsupported_media_type`**; **500 `internal_error` / `server_configuration_error`**. On conflicts, refresh progress and show the relevant restriction. No client-supplied date or timestamp overrides server values.
+Errors: **400 `invalid_input`**; **401 `invalid_platform_token`**; **404 `student_not_found` / `game_not_found`**; **409 `game_inactive`, `game_already_attempted`, `attempt_conflict` or `reference_conflict`**; **415 `unsupported_media_type`**; **500 `internal_error` / `server_configuration_error`**. On conflicts, refresh progress and show the relevant restriction. No client-supplied date or timestamp overrides server values.
 
 ### POST /attempts/finish
 
@@ -233,7 +233,7 @@ Unknown routes return 404 and wrong methods 405. For recognized protected reques
 3. **Fetch availability:** GET `/games` and `/students/{student_id}/progress`. Offer only active games whose `eligible_to_start` is true.
 4. **Select and confirm:** operator selects and confirms the intended game in the UI. This is frontend state only; it must NOT create an attempt. The API has no operator-identity/confirmation endpoint.
 5. **Press Start:** send one explicit POST `/attempts/start`. Disable repeat actions while pending. Do not retry automatically. On 201, retain `attempt.id`, student/game IDs and server start time before launching the game.
-6. **Run the game:** associate its result with that returned attempt ID. An interruption does not release the daily or game slot.
+6. **Run the game:** associate its result with that returned attempt ID. An interruption does not release the game slot; other games remain playable that day.
 7. **Submit final score:** when the game finishes, submit one integer score 0-100 to `/attempts/finish` with the retained attempt ID. Do not create another attempt.
 8. **Confirm persistence:** on 200, require `score_saved === true` and a completed attempt. Use `attempt.score` as the confirmed saved score; totals may be unavailable. On an unconfirmed response, reconcile progress instead of claiming success.
 9. **Show confirmation for 10 seconds:** the frontend displays the confirmed `attempt.score` and owns the 10-second timer. The backend responds immediately and has no display timer. `total_available === false` must not suppress this confirmation or trigger resubmission.

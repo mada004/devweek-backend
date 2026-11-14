@@ -18,11 +18,11 @@ export async function gameApi(request: Request, path: string, store: GameStore, 
       if (!await store.studentExists(studentId)) return error('student_not_found', 'Student not found', 404);
       const [games, attempts, total] = await Promise.all([store.games(), store.attempts(studentId), store.total(studentId)]);
       const playDate = riyadhDate(now());
-      const dailyUsed = attempts.some(a => a.play_date === playDate);
-      return json({ student_id: studentId, play_date: playDate, daily_slot_consumed: dailyUsed, ...total,
+      // Legacy response field retained for frontend compatibility; no daily cap.
+      return json({ student_id: studentId, play_date: playDate, daily_slot_consumed: false, ...total,
         games: games.map(game => {
           const attempt = attempts.find(a => a.game_id === game.id) ?? null;
-          return { ...game, attempt, eligible_to_start: game.is_active && !attempt && !dailyUsed };
+          return { ...game, attempt, eligible_to_start: game.is_active && !attempt };
         }),
       });
     }
@@ -45,7 +45,6 @@ export async function gameApi(request: Request, path: string, store: GameStore, 
       if (!game.is_active) return error('game_inactive', 'Game is inactive', 409);
       const attempts = await store.attempts(body.student_id);
       if (attempts.some(a => a.game_id === body.game_id)) return error('game_already_attempted', 'Game already attempted', 409);
-      if (attempts.some(a => a.play_date === riyadhDate(now()))) return error('daily_limit_reached', 'A game was already started today in Asia/Riyadh', 409);
       return json({ attempt: await store.start(body.student_id, body.game_id as number) }, 201);
     }
     if (!uuid(body.attempt_id) || !Number.isInteger(body.score) || Number(body.score) < 0 || Number(body.score) > 100) {

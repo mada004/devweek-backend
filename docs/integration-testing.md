@@ -1,5 +1,19 @@
 # Isolated integration testing and defect-fix verification
 
+## Current rule update — 2026-11-14
+
+Participants may start and complete all five different games on one Riyadh date. Each specific game still has one event-wide attempt; interrupted attempts retain that slot. The new migration removes only `one_attempt_per_day`. The initial migration is unchanged, and the lifecycle trigger has no daily-limit dependency.
+
+Current local verification: all **26 unit tests passed**, all five Deno entry points type-checked, and both local HTTP orchestration scripts passed Node syntax checks. Unit tests now cover five same-day starts/completions totaling 500, concurrent different-game success, concurrent same-game rejection, immutable completed attempts, score bounds, leaderboard, and unchanged registration/login.
+
+The reusable `tests/integration/remove-daily-limit.sql` was executed on an isolated PostgreSQL 17.11 cluster with simulated Supabase roles. It applied the original migration, inserted a synthetic historical attempt, applied the new migration, verified exact preservation of that row and all other attempt constraints, started the remaining four games on the same date, completed all five for 500, and confirmed duplicate-game rejection, score bounds, immutable completed scores/deletion rejection, and RLS. Separate competing PostgreSQL connections verified one same-game start commits and the other fails the retained unique constraint. The cluster was stopped and removed after verification.
+
+Docker's Linux engine was unavailable, so the full HTTP/PostgREST/Edge Runtime journey was **not rerun** for this rule change. The updated orchestrator now copies every migration in order, and its journey expects a second different game to succeed while same-game replay fails. Historical results below describe earlier executions and do not count as current-rule HTTP verification.
+
+Frontend impact: paths and request formats are unchanged. `daily_slot_consumed` remains in progress for compatibility but is always false; clients should use each game's `eligible_to_start` and remove any local daily lockout. `play_date` remains Riyadh metadata. After separate deployment approval, apply the migration before deploying the changed functions; otherwise the old database constraint will still reject same-day starts. No production writes, deployment, commit, or push occurred during this change.
+
+To rerun the SQL regression, create a new disposable PostgreSQL database and NOLOGIN roles anon/authenticated plus a BYPASSRLS service_role, then run `psql -X -v ON_ERROR_STOP=1 -f tests/integration/remove-daily-limit.sql` against that disposable database only. The script creates the schema and synthetic data; never target an existing or hosted database.
+
 This report records verification of the local fixes on `phase-3-backend` before the authorized Git handoff. No production data, function deployment, schema, migration, secret, constraint or authentication rule was changed during testing. Commit/push authorization was subsequently received; deployment remains unauthorized.
 
 ## Run safely
@@ -71,10 +85,10 @@ The fixed journey must not bypass login. It verifies:
 3. Fresh registration/login regressions for leading-zero, reserved-character and surrounding-space TEXT values; mismatched `123` lookup is 404.
 4. Five fixed games, max_score 100 each.
 5. Explicit synthetic operator acknowledgement followed by first start (201), with database-generated ID/time and Riyadh date.
-6. Second game on the same Riyadh date rejected (409 `daily_limit_reached`).
+6. Second different game on the same Riyadh date accepted (201); same-game replay still rejected.
 7. Same-game replay rejected (409 `game_already_attempted`).
 8. Finish with 85 (200), confirmed saved attempt plus available total, one completed game.
-9. Progress shows saved score 85 and consumed daily slot.
+9. Progress shows saved score 85 and daily_slot_consumed false, with unplayed active games eligible.
 10. Leaderboard aggregates the synthetic participant to 85/one completion.
 11. Repeated finish with 25 rejected (409); progress remains 85.
 
@@ -95,7 +109,7 @@ Final execution results are recorded below after the fixed local run. Automated 
 
 Full journey verified locally: **Register -> Login -> Start Game -> Finish Game -> Confirm Saved Score -> Progress -> Leaderboard**. No local journey bypasses the returning-login step now.
 
-The only response-contract change is the finish success metadata/degraded-success variant documented in `docs/api.md`. Student lookup fields and login requirements are unchanged. Per-game/day uniqueness, atomic completion predicate and lifecycle trigger remain unchanged. The frontend owns its 10-second display and can render the confirmed `attempt.score` even when totals are unavailable.
+The only response-contract change is the finish success metadata/degraded-success variant documented in `docs/api.md`. Student lookup fields and login requirements are unchanged. Per-game uniqueness, atomic completion predicate and lifecycle trigger remain unchanged. See the later daily-limit-removal section below. The frontend owns its 10-second display and can render the confirmed `attempt.score` even when totals are unavailable.
 
 ### Current files and remaining gaps
 

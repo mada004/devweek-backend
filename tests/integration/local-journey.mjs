@@ -84,7 +84,8 @@ try {
   const expectedDate = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Riyadh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(attempt.started_at));
   assert.equal(attempt.play_date,expectedDate);
   const second = await call('/attempts/start','POST',{student_id:student.id,game_id:2});
-  check('reject second game on same Riyadh date',second,409,'daily_limit_reached');
+  check('allow second different game on same Riyadh date',second,201);
+  assert.equal(second.data.attempt.play_date,attempt.play_date);
   const replay = await call('/attempts/start','POST',{student_id:student.id,game_id:1});
   check('reject replay of same game',replay,409,'game_already_attempted');
   const finished = await call('/attempts/finish','POST',{attempt_id:attempt.id,score:85});
@@ -100,7 +101,8 @@ try {
   check('verify persisted score through participant progress',progress,200);
   assert.equal(progress.data.total_score,85);
   assert.equal(progress.data.games_completed,1);
-  assert.equal(progress.data.daily_slot_consumed,true);
+  assert.equal(progress.data.daily_slot_consumed,false);
+  assert.equal(progress.data.games.find(game=>game.id===3).eligible_to_start,true);
   assert.equal(progress.data.games.find(game=>game.id===1).attempt.score,85);
   assert.equal(progress.data.games.find(game=>game.id===1).attempt.status,'completed');
   const leaders = await call('/leaderboard');

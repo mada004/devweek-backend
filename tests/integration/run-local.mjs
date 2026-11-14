@@ -17,7 +17,9 @@ const traceLogin=process.argv.includes('--trace-login');
 mkdirSync(workspace+'/supabase/migrations',{recursive:true});
 let config=readFileSync(repo+'/supabase/config.toml','utf8').replace('project_id = "devweek-backend"','project_id = "'+localProjectId+'"').replace(/\b543(\d\d)\b/g,'553$1');
 writeFileSync(workspace+'/supabase/config.toml',config);
-copyFileSync(repo+'/supabase/migrations/001_initial_schema.sql',workspace+'/supabase/migrations/001_initial_schema.sql');
+for (const migration of readdirSync(repo+'/supabase/migrations').filter(name=>name.endsWith('.sql')).sort()) {
+  copyFileSync(repo+'/supabase/migrations/'+migration,workspace+'/supabase/migrations/'+migration);
+}
 function copyTs(source,target){mkdirSync(target,{recursive:true});for(const item of readdirSync(source,{withFileTypes:true})){if(item.isDirectory())copyTs(join(source,item.name),join(target,item.name));else if(item.name.endsWith('.ts'))copyFileSync(join(source,item.name),join(target,item.name));}}
 copyTs(repo+'/supabase/functions',workspace+'/supabase/functions');
 

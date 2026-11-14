@@ -11,12 +11,12 @@ PostgreSQL 15+ through Supabase, SQL migrations, and TypeScript Supabase Edge Fu
 - First visits use a name and user-provided number; returning visits use the number only. Numbers are unique TEXT, not university IDs, with no fixed digit count. Students have UUIDs; no student authentication is required.
 - A shared static access code is checked against a server-only environment variable. Successful checks issue a one-hour platform token signed with a separate server secret; student endpoints require that token.
 - Exactly five games, each worth up to 100 points; total score cannot exceed 500.
-- Starting consumes one attempt per game and one game per Asia/Riyadh calendar day, including interrupted attempts.
+- Participants may start all five different games on the same day. Starting consumes that game's one-time event attempt, including interrupted attempts.
 - Students need not complete all games. Only completed scores count toward the top-three leaderboard.
 
 ## Database structure
 
-`students` stores registration, `games` holds five seeded slots, and `game_attempts` links them. Unique constraints enforce per-game and per-day restrictions even under concurrency. `leaderboard_view` aggregates completed scores.
+`students` stores registration, `games` holds five seeded slots, and `game_attempts` links them. A unique constraint enforces one attempt per participant/game even under concurrency. `leaderboard_view` aggregates completed scores.
 
 See [database documentation](docs/database.md) for security and integration details.
 
@@ -36,6 +36,7 @@ devweek-backend/
       leaderboard/index.ts
     migrations/
       001_initial_schema.sql
+      20261114000100_remove_daily_attempt_limit.sql
   docs/
     api.md
     database.md

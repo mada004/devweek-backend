@@ -32,7 +32,6 @@ export function gameStore(url: string, secret: string, transport: typeof fetch =
       const message = typeof failure?.message === 'string' ? failure.message : '';
       if (failure?.code === '23505') {
         if (message.includes('one_attempt_per_game')) throw new GameError('game_already_attempted');
-        if (message.includes('one_attempt_per_day')) throw new GameError('daily_limit_reached');
         throw new GameError('attempt_conflict');
       }
       if (failure?.code === '23503') throw new GameError('reference_conflict');
