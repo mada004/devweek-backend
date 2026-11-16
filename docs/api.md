@@ -205,6 +205,27 @@ An empty result is `{"leaderboard":[]}`. At most three rows are returned, ordere
 
 Errors: **401 `invalid_platform_token`**, **500 `internal_error` / `server_configuration_error`**, plus common routing/method errors.
 
+## GET /leaderboard/games/{game_id}
+
+New per-game ranking, separate from the unchanged Overall `GET /leaderboard` top-three API.
+
+Staging example: `https://ainzqjnttwuslpengidf.supabase.co/functions/v1/leaderboard/games/1`.
+Use GET, no request body, and `Authorization: Bearer <platform_access_token>`. Existing CORS and OPTIONS behavior is preserved; this route is handled by the existing `leaderboard` function with `verify_jwt = false` and internal platform-token verification.
+
+HTTP 200:
+
+```json
+{"game_id":1,"max_score":100,"leaderboard":[{"full_name":"Ahmed Ali","score":95},{"full_name":"Sara Khalid","score":90}]}
+```
+
+Only game IDs `1`, `2`, `3`, `4`, `5` are valid path segments. At most ten participants are returned from completed attempts for that game, including score zero. Ordering is score descending, completion timestamp ascending, then attempt UUID ascending for a stable final tie-break. UUIDs and completion timestamps are used internally only; each response row contains exactly `full_name` and `score`. Distinct participants with identical names remain distinct rows. The existing UNIQUE(student_id, game_id) constraint prevents duplicate rows for the same participant/game; names must not be deduplicated.
+
+With no completed attempts: `{"game_id":1,"max_score":100,"leaderboard":[]}`.
+
+Errors use the existing error envelope: 400 `invalid_input` for invalid game IDs (including 0, 6, numeric fractions, text, or leading-zero forms); 401 `invalid_platform_token` for missing/expired/invalid bearer tokens; 405 `method_not_allowed` for non-GET/OPTIONS methods; 500 `internal_error` / `server_configuration_error` for storage/configuration failures. Tokens are checked before game ID validation. Unknown route structures return 404 `not_found`.
+
+No table, index, migration, score calculation, or attempt lifecycle changes are required. The query uses the existing game_attempts game-ID index and student foreign key. Overall keeps its exact response shape, limit of three, and total-score/UUID ordering. Game 3 continues through the same Start/Finish scoring APIs as every other game; the frontend/game team must disable its Google Sheets integration. The backend adds no Google Sheets integration.
+
 ## Error envelope and common status codes
 
 ```json

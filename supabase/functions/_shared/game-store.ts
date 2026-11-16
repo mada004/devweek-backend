@@ -5,6 +5,7 @@ export type Attempt = {
 };
 export type Total = { total_score: number; games_completed: number };
 export type Leader = Total & { full_name: string };
+export type GameLeader = { full_name: string; score: number };
 export class GameError extends Error {
   code: string;
   constructor(code: string) { super('Game storage operation failed'); this.code = code; }
@@ -18,6 +19,7 @@ export interface GameStore {
   finish(id: string, score: number, completedAt: string): Promise<Attempt | null>;
   total(studentId: string): Promise<Total>;
   leaderboard(): Promise<Leader[]>;
+  gameLeaderboard(gameId: number): Promise<GameLeader[]>;
 }
 
 export function gameStore(url: string, secret: string, transport: typeof fetch = fetch): GameStore {
@@ -67,5 +69,13 @@ export function gameStore(url: string, secret: string, transport: typeof fetch =
       return result[0];
     },
     leaderboard: () => rows<Leader>('leaderboard_view', { select: 'full_name,total_score,games_completed', order: 'total_score.desc,student_id.asc', limit: '3' }),
+    async gameLeaderboard(gameId) {
+      const result = await rows<{ score: number; students: { full_name: string } }>('game_attempts', {
+        select: 'score,students!inner(full_name)', game_id: `eq.${gameId}`, status: 'eq.completed',
+        order: 'score.desc,completed_at.asc,id.asc', limit: '10',
+      });
+      // Explicit projection prevents IDs, numbers, timestamps, and extra fields leaking.
+      return result.map(row => ({ full_name: row.students.full_name, score: row.score }));
+    },
   };
 }

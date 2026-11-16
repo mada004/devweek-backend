@@ -19,6 +19,7 @@ function fixture() {
     return { total_score: done.reduce((sum, a) => sum + a.score!, 0), games_completed: done.length };
   };
   const store: GameStore = {
+    async gameLeaderboard() { throw new Error('Not used by these existing journey tests'); },
     async games() { reads++; return structuredClone(games); },
     async studentExists(id) { reads++; return students.includes(id); },
     async attempts(id) { reads++; return structuredClone(attempts.filter(a => a.student_id === id)); },

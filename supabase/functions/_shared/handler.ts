@@ -15,11 +15,12 @@ export function createHandler(group: FunctionGroup, config: {
   return async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname.replace(/^\/functions\/v1/, '');
     const progress = group === 'students' && /^\/students\/[^/]+\/progress$/.test(path);
+    const gameLeaderboard = group === 'leaderboard' && /^\/leaderboard\/games\/[^/]+$/.test(path);
     const routes: Record<FunctionGroup, string[]> = {
       access: ['/access/verify'], students: ['/students/register', '/students/login'],
       games: ['/games'], attempts: ['/attempts/start', '/attempts/finish'], leaderboard: ['/leaderboard'],
     };
-    if (!routes[group].includes(path) && !progress) return error('not_found', 'Endpoint not found', 404);
+    if (!routes[group].includes(path) && !progress && !gameLeaderboard) return error('not_found', 'Endpoint not found', 404);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const method = progress || group === 'games' || group === 'leaderboard' ? 'GET' : 'POST';
     if (request.method !== method) return error('method_not_allowed', `Use ${method}`, 405);

@@ -12,6 +12,11 @@ export async function gameApi(request: Request, path: string, store: GameStore, 
   try {
     if (path === '/games') return json({ games: await store.games() });
     if (path === '/leaderboard') return json({ leaderboard: await store.leaderboard() });
+    if (path.startsWith('/leaderboard/games/')) {
+      const gameId = path.split('/')[3];
+      if (!/^[1-5]$/.test(gameId)) return error('invalid_input', 'game_id must be an integer from 1 to 5', 400);
+      return json({ game_id: Number(gameId), max_score: 100, leaderboard: await store.gameLeaderboard(Number(gameId)) });
+    }
     if (path.startsWith('/students/')) {
       const studentId = path.split('/')[2];
       if (!uuid(studentId)) return error('invalid_input', 'student_id must be a UUID', 400);
